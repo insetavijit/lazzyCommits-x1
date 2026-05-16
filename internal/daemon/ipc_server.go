@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/lazycommit/lazycommit/internal/ipc"
 	"go.uber.org/zap"
@@ -80,28 +81,62 @@ func (s *IPCServer) Start(ctx context.Context) error {
 func (s *IPCServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	var req ipc.StatusRequest
-	// We use Decode because we expect a JSON object. 
-	// If the client just connects and closes, this might error.
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
-		// It's possible the client just wants a status without sending anything, 
-		// but our protocol says they send StatusRequest.
-		return 
+	var envelope struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.NewDecoder(conn).Decode(&envelope); err != nil {
+		return
 	}
 
-	resp := ipc.StatusResponse{}
-	for _, repo := range s.registry.All() {
-		stateStr := "UNKNOWN"
-		if repo.StateMachine != nil {
-			stateStr = string(repo.StateMachine.GetState())
+	var response interface{}
+
+	switch envelope.Type {
+	case "status":
+		resp := ipc.StatusResponse{}
+		for _, repo := range s.registry.All() {
+			stateStr := "UNKNOWN"
+			if repo.StateMachine != nil {
+				stateStr = string(repo.StateMachine.GetState())
+			}
+			resp.Repos = append(resp.Repos, ipc.RepoStatus{
+				Path:  repo.Config.Path,
+				State: stateStr,
+			})
 		}
-		resp.Repos = append(resp.Repos, ipc.RepoStatus{
-			Path:  repo.Config.Path,
-			State: stateStr,
-		})
+		response = resp
+
+	case "schedule":
+		var req ipc.ScheduleRequest
+		if err := json.Unmarshal(envelope.Payload, &req); err != nil {
+			response = ipc.ScheduleResponse{Success: false, Error: "invalid payload"}
+		} else {
+			response = s.handleSchedule(req)
+		}
 	}
 
-	if err := json.NewEncoder(conn).Encode(resp); err != nil {
-		s.logger.Error("Failed to encode IPC response", zap.Error(err))
+	if response != nil {
+		if err := json.NewEncoder(conn).Encode(response); err != nil {
+			s.logger.Error("Failed to encode IPC response", zap.Error(err))
+		}
 	}
+}
+
+func (s *IPCServer) handleSchedule(req ipc.ScheduleRequest) ipc.ScheduleResponse {
+	repo, ok := s.registry.Get(req.RepoPath)
+	if !ok {
+		return ipc.ScheduleResponse{Success: false, Error: "repository not found or not being watched"}
+	}
+
+	if repo.StateMachine == nil {
+		return ipc.ScheduleResponse{Success: false, Error: "state machine not initialized for this repository"}
+	}
+
+	importTime, err := time.ParseDuration(req.Delay)
+	if err != nil {
+		return ipc.ScheduleResponse{Success: false, Error: "invalid duration format"}
+	}
+
+	repo.StateMachine.ScheduleManualCommit(importTime, req.Message)
+	return ipc.ScheduleResponse{Success: true}
 }

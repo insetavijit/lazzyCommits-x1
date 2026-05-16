@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 type Client struct {
@@ -22,14 +21,20 @@ func NewClient() (*Client, error) {
 }
 
 func (c *Client) GetStatus() (*StatusResponse, error) {
-	conn, err := net.DialTimeout("unix", c.socket, 2*time.Second)
+	conn, err := net.Dial("unix", c.socket)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	req := StatusRequest{}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
+	envelope := struct {
+		Type    string `json:"type"`
+		Payload interface{} `json:"payload"`
+	}{
+		Type: "status",
+	}
+
+	if err := json.NewEncoder(conn).Encode(envelope); err != nil {
 		return nil, err
 	}
 
@@ -40,3 +45,35 @@ func (c *Client) GetStatus() (*StatusResponse, error) {
 
 	return &resp, nil
 }
+
+func (c *Client) ScheduleCommit(path, delay, msg string) (*ScheduleResponse, error) {
+	conn, err := net.Dial("unix", c.socket)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	envelope := struct {
+		Type    string `json:"type"`
+		Payload interface{} `json:"payload"`
+	}{
+		Type: "schedule",
+		Payload: ScheduleRequest{
+			RepoPath: path,
+			Delay:    delay,
+			Message:  msg,
+		},
+	}
+
+	if err := json.NewEncoder(conn).Encode(envelope); err != nil {
+		return nil, err
+	}
+
+	var resp ScheduleResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+

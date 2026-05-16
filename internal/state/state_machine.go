@@ -44,6 +44,10 @@ type StateMachine struct {
 	pushDuration time.Duration
 
 	retryQueue *queue.RetryQueue
+
+	// Manual schedule
+	manualTimer *time.Timer
+	manualMsg   string
 }
 
 func NewStateMachine(
@@ -91,11 +95,68 @@ func (sm *StateMachine) Run(ctx context.Context) {
 			sm.handleIdleTimer()
 		case <-sm.pushTimerChan():
 			sm.handlePushTimer()
+		case <-sm.manualTimerChan():
+			sm.handleManualTimer()
 		case <-ctx.Done():
 			sm.stopTimers()
 			return
 		}
 	}
+}
+
+func (sm *StateMachine) ScheduleManualCommit(delay time.Duration, msg string) {
+	sm.logger.Info("Scheduling manual commit", zap.Duration("delay", delay), zap.String("message", msg))
+	sm.stopManualTimer()
+	sm.manualMsg = msg
+	sm.manualTimer = time.NewTimer(delay)
+}
+
+func (sm *StateMachine) manualTimerChan() <-chan time.Time {
+	if sm.manualTimer == nil {
+		return nil
+	}
+	return sm.manualTimer.C
+}
+
+func (sm *StateMachine) stopManualTimer() {
+	if sm.manualTimer != nil {
+		sm.manualTimer.Stop()
+		sm.manualTimer = nil
+	}
+}
+
+func (sm *StateMachine) handleManualTimer() {
+	sm.logger.Info("Manual commit timer fired")
+	sm.stopManualTimer()
+	sm.transitionTo(COMMITTING)
+	sm.performCommitWithMsg(sm.manualMsg)
+}
+
+func (sm *StateMachine) performCommitWithMsg(msg string) {
+	start := time.Now()
+	sm.logger.Info("Performing manual auto-commit", zap.String("msg", msg))
+
+	// Safety Guard check
+	res := sm.guard.Check(sm.repoCfg.Path, sm.repoCfg.ProtectedBranches, 50)
+	if !res.Passed {
+		err := fmt.Errorf("safety guard failed: %s", res.Reason)
+		sm.logger.Warn("Safety guard failed, aborting manual commit", zap.String("reason", res.Reason))
+		sm.activityLogger.Log(sm.repoCfg.Path, logger.ActionCommitted, logger.OutcomeFailed, time.Since(start), err)
+		sm.transitionTo(IDLE)
+		return
+	}
+
+	err := sm.engine.StageAndCommitWithMsg(sm.repoCfg.Path, msg)
+	if err != nil {
+		sm.logger.Error("Manual auto-commit failed", zap.Error(err))
+		sm.activityLogger.Log(sm.repoCfg.Path, logger.ActionCommitted, logger.OutcomeFailed, time.Since(start), err)
+		sm.transitionTo(IDLE)
+		return
+	}
+
+	sm.activityLogger.Log(sm.repoCfg.Path, logger.ActionCommitted, logger.OutcomeSuccess, time.Since(start), nil)
+	sm.transitionTo(UNPUSHED)
+	sm.resetPushTimer()
 }
 
 func (sm *StateMachine) handleEvent(event watcher.Event) {

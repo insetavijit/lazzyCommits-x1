@@ -16,6 +16,7 @@ type GitEngine interface {
 	Push(repoPath string) error
 	HasUnpushedCommits(repoPath string) (bool, error)
 	StageAndCommit(repoPath string) error
+	StageAndCommitWithMsg(repoPath string, msg string) error
 }
 
 type Engine struct {
@@ -29,6 +30,10 @@ func NewEngine(logger *zap.Logger) *Engine {
 }
 
 func (e *Engine) StageAndCommit(repoPath string) error {
+	return e.StageAndCommitWithMsg(repoPath, "")
+}
+
+func (e *Engine) StageAndCommitWithMsg(repoPath string, msg string) error {
 	repo, err := git.PlainOpen(repoPath)
 	if err != nil {
 		return fmt.Errorf("failed to open repo: %w", err)
@@ -61,14 +66,17 @@ func (e *Engine) StageAndCommit(repoPath string) error {
 		return nil
 	}
 
-	msg := composer.Compose(stagedStatus)
+	finalMsg := msg
+	if finalMsg == "" {
+		finalMsg = composer.Compose(stagedStatus)
+	}
 
-	_, err = worktree.Commit(msg, &git.CommitOptions{})
+	_, err = worktree.Commit(finalMsg, &git.CommitOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	e.logger.Info("Successfully committed changes", zap.String("path", repoPath), zap.String("msg", msg))
+	e.logger.Info("Successfully committed changes", zap.String("path", repoPath), zap.String("msg", finalMsg))
 	return nil
 }
 
