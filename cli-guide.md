@@ -10,6 +10,8 @@ A quick reference for managing the lazyCommit daemon and its automated Git behav
 | `lazycommit stop` | **Daemon Lifecycle** | Safely terminates the running background daemon using the PID file. |
 | `lazycommit status` | **Monitoring** | Checks if the daemon is active and displays the current process ID (PID). |
 | `lazycommit daemon` | **Debug/Service** | Runs the daemon in the foreground (internal use / container entrypoint). |
+| `lazycommit scan [dir]` | **Discovery** | Scans for Git repositories downwards from the specified directory. |
+| `lazycommit scan-all [dir]` | **Discovery** | Scans for Git repositories including parent directories of the specified path. |
 | `git commit ...` | **Lazy Push** | (Trigger) Making a manual commit triggers the auto-push sequence. |
 
 ---
