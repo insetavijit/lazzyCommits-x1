@@ -1,4 +1,4 @@
-package service
+package dev
 
 import (
 	"context"
