@@ -9,10 +9,16 @@ import (
 	"go.uber.org/zap"
 )
 
+type PushResponse struct {
+	Repo    string `json:"repo"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
 func NewPushCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "push [repo_path]",
-		Short: "Perform a one-off push with safety checks",
+		Short: "Perform a one-off push with safety checks (JSON output)",
 		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			repoPath := "."
@@ -22,31 +28,31 @@ func NewPushCmd() *cobra.Command {
 
 			absPath, err := filepath.Abs(repoPath)
 			if err != nil {
-				fmt.Printf("Invalid path: %v\n", err)
+				PrintErrorJSON(err)
 				return
 			}
 
-			logger, _ := zap.NewProduction()
-			defer logger.Sync()
-
+			logger := zap.NewNop()
 			engine := git.NewEngine(logger)
 			guard := git.NewSafetyGuard(logger)
 
-			fmt.Printf("Performing atomic push for: %s\n", absPath)
-
 			res := guard.Check(absPath, []string{"main", "master"}, 50)
 			if !res.Passed {
-				fmt.Printf("Safety Check Failed: %s\n", res.Reason)
+				PrintErrorJSON(fmt.Errorf("safety check failed: %s", res.Reason))
 				return
 			}
 
 			err = engine.Push(absPath)
 			if err != nil {
-				fmt.Printf("Push Failed: %v\n", err)
+				PrintErrorJSON(err)
 				return
 			}
 
-			fmt.Println("Push successful!")
+			PrintJSON(PushResponse{
+				Repo:    absPath,
+				Success: true,
+				Message: "Push successful",
+			})
 		},
 	}
 }

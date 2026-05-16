@@ -9,10 +9,16 @@ import (
 	"go.uber.org/zap"
 )
 
+type CommitResponse struct {
+	Repo    string `json:"repo"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
 func NewCommitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "commit [repo_path]",
-		Short: "Perform a one-off auto-commit of tracked changes",
+		Short: "Perform a one-off auto-commit of tracked changes (JSON output)",
 		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			repoPath := "."
@@ -22,31 +28,31 @@ func NewCommitCmd() *cobra.Command {
 
 			absPath, err := filepath.Abs(repoPath)
 			if err != nil {
-				fmt.Printf("Invalid path: %v\n", err)
+				PrintErrorJSON(err)
 				return
 			}
 
-			logger, _ := zap.NewProduction()
-			defer logger.Sync()
-
+			logger := zap.NewNop()
 			engine := git.NewEngine(logger)
 			guard := git.NewSafetyGuard(logger)
 
-			fmt.Printf("Performing atomic auto-commit for: %s\n", absPath)
-
 			res := guard.Check(absPath, []string{"main", "master"}, 50)
 			if !res.Passed {
-				fmt.Printf("Safety Check Failed: %s\n", res.Reason)
+				PrintErrorJSON(fmt.Errorf("safety check failed: %s", res.Reason))
 				return
 			}
 
 			err = engine.StageAndCommit(absPath)
 			if err != nil {
-				fmt.Printf("Commit Failed: %v\n", err)
+				PrintErrorJSON(err)
 				return
 			}
 
-			fmt.Println("Auto-commit successful!")
+			PrintJSON(CommitResponse{
+				Repo:    absPath,
+				Success: true,
+				Message: "Auto-commit successful",
+			})
 		},
 	}
 }
