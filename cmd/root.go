@@ -28,11 +28,12 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.lazycommit/config.toml)")
 
-	// Core Atomic Commands (4: commit, push, scan, brief)
+	// Core Atomic Commands (5: commit, push, scan, brief, ssh)
 	rootCmd.AddCommand(core.NewCommitCmd())
 	rootCmd.AddCommand(core.NewPushCmd())
 	rootCmd.AddCommand(core.NewScanCmd())
 	rootCmd.AddCommand(core.NewBriefCmd())
+	rootCmd.AddCommand(core.NewSSHCmd())
 
 	// Complex Dev Commands
 	rootCmd.AddCommand(dev.NewStartCmd())

@@ -3,11 +3,11 @@ package dev
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/lazycommit/lazycommit/cmd/core"
 	"github.com/lazycommit/lazycommit/internal/ipc"
+	"github.com/lazycommit/lazycommit/internal/scanner"
 	"github.com/spf13/cobra"
 )
 
@@ -19,21 +19,20 @@ var (
 	timeFlag   string
 )
 
-var randomMessages = []string{
-	"auto: automated progress",
-	"auto: making the world better, one byte at a time",
-	"auto: I forgot to commit this earlier",
-	"auto: magic happens here",
-	"auto: just keep swimming",
-	"auto: trust me, I'm a daemon",
-	"auto: fix it, ship it, forget it",
-	"auto: oops, did I do that?",
+type ScheduleResponse struct {
+	Repo    string             `json:"repo"`
+	Success bool               `json:"success"`
+	ID      string             `json:"id,omitempty"`
+	Type    string             `json:"type"`
+	Delay   string             `json:"delay"`
+	Brief   scanner.RepoBrief  `json:"brief,omitempty"`
+	Message string             `json:"message,omitempty"`
 }
 
 func NewScheduleCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedule [repo_path]",
-		Short: "Schedule a Git action or shell command via the daemon",
+		Short: "Schedule a Git action or shell command (JSON output)",
 		Long: `Schedule a commit, push, or any shell command for a repository after a specific delay.
 Examples:
   lazycommit schedule . --commit -t 5s
@@ -43,30 +42,17 @@ Examples:
 		Run: func(cmd *cobra.Command, args []string) {
 			client, err := ipc.NewClient()
 			if err != nil {
-				fmt.Println("Error connecting to daemon:", err)
+				core.PrintErrorJSON(err)
 				return
 			}
 
 			if listFlag {
 				resp, err := client.GetScheduledTasks()
 				if err != nil {
-					fmt.Printf("Failed to get scheduled list: %v\n", err)
+					core.PrintErrorJSON(err)
 					return
 				}
-
-				fmt.Println("Currently Scheduled Tasks:")
-				fmt.Printf("%-20s | %-10s | %-50s | %s\n", "ID", "TYPE", "REPO", "RUN AT")
-				fmt.Println(strings.Repeat("-", 110))
-
-				if len(resp.Tasks) == 0 {
-					fmt.Println("No tasks currently scheduled.")
-					return
-				}
-
-				for _, t := range resp.Tasks {
-					fmt.Printf("%-20s | %-10s | %-50s | %s\n", 
-						t.ID, t.Type, core.TruncateRepoPath(t.Repo, 50), t.RunAt.Local().Format("15:04:05"))
-				}
+				core.PrintJSON(resp)
 				return
 			}
 
@@ -74,7 +60,11 @@ Examples:
 			if len(args) == 1 {
 				repoPath = args[0]
 			}
-			absPath, _ := filepath.Abs(repoPath)
+			absPath, err := filepath.Abs(repoPath)
+			if err != nil {
+				core.PrintErrorJSON(err)
+				return
+			}
 
 			var taskType string
 			var taskArgs []string
@@ -89,22 +79,33 @@ Examples:
 				taskType = "run"
 				taskArgs = []string{runFlag}
 			} else {
-				fmt.Println("Error: either --commit, --push, or --run must be specified")
+				core.PrintErrorJSON(fmt.Errorf("either --commit, --push, or --run must be specified"))
 				return
 			}
 
 			resp, err := client.ScheduleTask(absPath, taskType, timeFlag, taskArgs)
 			if err != nil {
-				fmt.Printf("Failed to schedule task: %v\n", err)
+				core.PrintErrorJSON(err)
 				return
 			}
 
-			if resp.Success {
-				fmt.Printf("Successfully scheduled %s for %s in %s (ID: %s)\n", 
-					taskType, absPath, timeFlag, resp.ID)
-			} else {
-				fmt.Printf("Error from daemon: %s\n", resp.Error)
+			if !resp.Success {
+				core.PrintErrorJSON(fmt.Errorf(resp.Error))
+				return
 			}
+
+			// Get maximum info for the caller
+			brief := scanner.GetRepoBrief(absPath)
+
+			core.PrintJSON(ScheduleResponse{
+				Repo:    absPath,
+				Success: true,
+				ID:      resp.ID,
+				Type:    taskType,
+				Delay:   timeFlag,
+				Brief:   brief,
+				Message: fmt.Sprintf("Successfully scheduled %s", taskType),
+			})
 		},
 	}
 
