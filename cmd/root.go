@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/lazycommit/lazycommit/cmd/core"
+	"github.com/lazycommit/lazycommit/cmd/service"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -25,6 +27,21 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.lazycommit/config.toml)")
+
+	// Atomic Core Commands
+	rootCmd.AddCommand(core.NewPushCmd())
+	rootCmd.AddCommand(core.NewCommitCmd())
+	rootCmd.AddCommand(core.NewWatchCmd())
+	rootCmd.AddCommand(core.NewScanCmd())
+	rootCmd.AddCommand(core.NewScanAllCmd())
+
+	// Complex Service Commands
+	rootCmd.AddCommand(service.NewStartCmd())
+	rootCmd.AddCommand(service.NewStopCmd())
+	rootCmd.AddCommand(service.NewStatusCmd())
+	rootCmd.AddCommand(service.NewLogsCmd())
+	rootCmd.AddCommand(service.NewScheduleCmd())
+	rootCmd.AddCommand(service.NewDaemonCmd())
 }
 
 func initConfig() {
