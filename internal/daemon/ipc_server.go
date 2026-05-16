@@ -9,16 +9,18 @@ import (
 	"time"
 
 	"github.com/lazycommit/lazycommit/internal/ipc"
+	"github.com/lazycommit/lazycommit/internal/scheduler"
 	"go.uber.org/zap"
 )
 
 type IPCServer struct {
-	registry *Registry
-	logger   *zap.Logger
-	socket   string
+	registry  *Registry
+	scheduler *scheduler.Scheduler
+	logger    *zap.Logger
+	socket    string
 }
 
-func NewIPCServer(registry *Registry, logger *zap.Logger) (*IPCServer, error) {
+func NewIPCServer(registry *Registry, sched *scheduler.Scheduler, logger *zap.Logger) (*IPCServer, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -26,9 +28,10 @@ func NewIPCServer(registry *Registry, logger *zap.Logger) (*IPCServer, error) {
 	socket := filepath.Join(home, ".lazycommit", "daemon.sock")
 
 	return &IPCServer{
-		registry: registry,
-		logger:   logger,
-		socket:   socket,
+		registry:  registry,
+		scheduler: sched,
+		logger:    logger,
+		socket:    socket,
 	}, nil
 }
 
@@ -111,13 +114,26 @@ func (s *IPCServer) handleConnection(conn net.Conn) {
 		}
 		response = resp
 
-	case "schedule":
-		var req ipc.ScheduleRequest
+	case "task":
+		var req ipc.TaskRequest
 		if err := json.Unmarshal(envelope.Payload, &req); err != nil {
-			response = ipc.ScheduleResponse{Success: false, Error: "invalid payload"}
+			response = ipc.TaskResponse{Success: false, Error: "invalid payload"}
 		} else {
-			response = s.handleSchedule(req)
+			response = s.handleTask(req)
 		}
+
+	case "scheduled_list":
+		tasks := s.scheduler.All()
+		var list []ipc.TaskInfo
+		for _, t := range tasks {
+			list = append(list, ipc.TaskInfo{
+				ID:    t.ID,
+				Type:  string(t.Type),
+				Repo:  t.Repo,
+				RunAt: t.RunAt,
+			})
+		}
+		response = ipc.ScheduledListResponse{Tasks: list}
 	}
 
 	if response != nil {
@@ -127,21 +143,22 @@ func (s *IPCServer) handleConnection(conn net.Conn) {
 	}
 }
 
-func (s *IPCServer) handleSchedule(req ipc.ScheduleRequest) ipc.ScheduleResponse {
-	repo, ok := s.registry.Get(req.RepoPath)
-	if !ok {
-		return ipc.ScheduleResponse{Success: false, Error: "repository not found or not being watched"}
-	}
-
-	if repo.StateMachine == nil {
-		return ipc.ScheduleResponse{Success: false, Error: "state machine not initialized for this repository"}
-	}
-
-	importTime, err := time.ParseDuration(req.Delay)
+func (s *IPCServer) handleTask(req ipc.TaskRequest) ipc.TaskResponse {
+	delay, err := time.ParseDuration(req.Delay)
 	if err != nil {
-		return ipc.ScheduleResponse{Success: false, Error: "invalid duration format"}
+		return ipc.TaskResponse{Success: false, Error: "invalid duration format"}
 	}
 
-	repo.StateMachine.ScheduleManualCommit(importTime, req.Message)
-	return ipc.ScheduleResponse{Success: true}
+	task := &scheduler.Task{
+		Type:  scheduler.TaskType(req.Type),
+		Repo:  req.Repo,
+		Args:  req.Args,
+		RunAt: time.Now().Add(delay),
+	}
+
+	if err := s.scheduler.Schedule(task); err != nil {
+		return ipc.TaskResponse{Success: false, Error: err.Error()}
+	}
+
+	return ipc.TaskResponse{Success: true, ID: task.ID}
 }

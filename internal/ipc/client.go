@@ -46,7 +46,7 @@ func (c *Client) GetStatus() (*StatusResponse, error) {
 	return &resp, nil
 }
 
-func (c *Client) ScheduleCommit(path, delay, msg string) (*ScheduleResponse, error) {
+func (c *Client) ScheduleTask(repo, taskType, delay string, args []string) (*TaskResponse, error) {
 	conn, err := net.Dial("unix", c.socket)
 	if err != nil {
 		return nil, err
@@ -57,11 +57,12 @@ func (c *Client) ScheduleCommit(path, delay, msg string) (*ScheduleResponse, err
 		Type    string `json:"type"`
 		Payload interface{} `json:"payload"`
 	}{
-		Type: "schedule",
-		Payload: ScheduleRequest{
-			RepoPath: path,
-			Delay:    delay,
-			Message:  msg,
+		Type: "task",
+		Payload: TaskRequest{
+			Type:  taskType,
+			Repo:  repo,
+			Delay: delay,
+			Args:  args,
 		},
 	}
 
@@ -69,7 +70,32 @@ func (c *Client) ScheduleCommit(path, delay, msg string) (*ScheduleResponse, err
 		return nil, err
 	}
 
-	var resp ScheduleResponse
+	var resp TaskResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+func (c *Client) GetScheduledTasks() (*ScheduledListResponse, error) {
+	conn, err := net.Dial("unix", c.socket)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	envelope := struct {
+		Type string `json:"type"`
+	}{
+		Type: "scheduled_list",
+	}
+
+	if err := json.NewEncoder(conn).Encode(envelope); err != nil {
+		return nil, err
+	}
+
+	var resp ScheduledListResponse
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
 		return nil, err
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/lazycommit/lazycommit/internal/git"
 	actlogger "github.com/lazycommit/lazycommit/internal/logger"
 	"github.com/lazycommit/lazycommit/internal/queue"
+	"github.com/lazycommit/lazycommit/internal/scheduler"
 	"github.com/lazycommit/lazycommit/internal/state"
 	"github.com/lazycommit/lazycommit/internal/watcher"
 	"go.uber.org/zap"
@@ -24,16 +25,19 @@ type Daemon struct {
 	ctx            context.Context
 	retryQueue     *queue.RetryQueue
 	activityLogger *actlogger.ActivityLogger
+	scheduler      *scheduler.Scheduler
 }
 
 func New(cfg *config.Config, logger *zap.Logger) *Daemon {
 	rq, _ := queue.NewRetryQueue(logger)
+	sched, _ := scheduler.NewScheduler(logger)
 	return &Daemon{
 		cfg:            cfg,
 		logger:         logger,
 		registry:       NewRegistry(),
 		retryQueue:     rq,
 		activityLogger: actlogger.NewActivityLogger(),
+		scheduler:      sched,
 	}
 }
 
@@ -54,8 +58,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	go d.watchConfig(d.ctx)
 	go d.pollRetryQueue(d.ctx)
+	go d.pollScheduler(d.ctx)
 
-	ipcServer, err := NewIPCServer(d.registry, d.logger)
+	ipcServer, err := NewIPCServer(d.registry, d.scheduler, d.logger)
 	if err == nil {
 		ipcServer.Start(d.ctx)
 	} else {
@@ -74,6 +79,45 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (d *Daemon) pollScheduler(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	engine := git.NewEngine(d.logger)
+
+	for {
+		select {
+		case <-ticker.C:
+			pending := d.scheduler.GetPending()
+			for _, task := range pending {
+				d.logger.Info("Executing scheduled task", 
+					zap.String("id", task.ID), 
+					zap.String("type", string(task.Type)))
+				
+				switch task.Type {
+				case scheduler.TaskCommit:
+					msg := ""
+					if len(task.Args) > 0 {
+						msg = task.Args[0]
+					}
+					err := engine.StageAndCommitWithMsg(task.Repo, msg)
+					if err != nil {
+						d.logger.Error("Scheduled commit failed", zap.Error(err))
+					}
+				case scheduler.TaskPush:
+					err := engine.Push(task.Repo)
+					if err != nil {
+						d.logger.Error("Scheduled push failed", zap.Error(err))
+						d.retryQueue.Enqueue(task.Repo)
+					}
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (d *Daemon) pollRetryQueue(ctx context.Context) {
