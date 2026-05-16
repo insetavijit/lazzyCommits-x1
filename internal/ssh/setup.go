@@ -17,6 +17,12 @@ type SetupResult struct {
 	Configured bool   `json:"configured"`
 }
 
+type VerifyResult struct {
+	Success bool   `json:"success"`
+	User    string `json:"user"`
+	Message string `json:"message"`
+}
+
 func Setup(email string) (*SetupResult, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -76,6 +82,35 @@ func Setup(email string) (*SetupResult, error) {
 
 	res.Success = true
 	return res, nil
+}
+
+func VerifyConnection() (*VerifyResult, error) {
+	cmd := exec.Command("ssh", "-T", "git@github.com", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5")
+	var out bytes.Buffer
+	cmd.Stderr = &out
+	cmd.Stdout = &out
+
+	_ = cmd.Run()
+	output := out.String()
+
+	if strings.Contains(output, "successfully authenticated") {
+		user := "unknown"
+		parts := strings.Split(output, " ")
+		if len(parts) >= 2 {
+			// Hi username! You've successfully authenticated...
+			user = strings.Trim(parts[1], "!,")
+		}
+		return &VerifyResult{
+			Success: true,
+			User:    user,
+			Message: "Successfully authenticated with GitHub.",
+		}, nil
+	}
+
+	return &VerifyResult{
+		Success: false,
+		Message: output,
+	}, nil
 }
 
 func hostInKnownHosts(path, host string) bool {

@@ -19,6 +19,7 @@ type RepoInfo struct {
 	Branch         string   `json:"branch"`
 	Commits        int      `json:"commits"`
 	IsDirty        bool     `json:"isDirty"`
+	Ignored        bool     `json:"ignored"`
 	UntrackedCount int      `json:"untrackedCount"`
 	ModifiedCount  int      `json:"modifiedCount"`
 	StagedCount    int      `json:"stagedCount"`
@@ -192,6 +193,11 @@ func GetRepoInfo(path string) RepoInfo {
 	wt, err := repo.Worktree()
 	if err == nil {
 		info.Path = wt.Filesystem.Root()
+	}
+
+	// Check for .lazyignore
+	if _, err := os.Stat(filepath.Join(info.Path, ".lazyignore")); err == nil {
+		info.Ignored = true
 	}
 
 	// Get Branch

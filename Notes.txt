@@ -1,1 +1,49 @@
 git@github.com:insetavijit/experimentalXYZ123.git  xx
+
+=======
+
+start
+    - validateSSH
+    - Collect-all-the-git-paths
+    - validate-lazyignore : if any git repo has a .lazyignore then ignore that and create a list of repose to wach
+    - initiate watch for all those repose 
+    - on any of this repose have unpused commits ( commit --chek ) create a shedule for auto push in 5s
+    - if any of this repos have no commit but have uncommited changes see the age of chenge if its older 
+        then 5min menading if any change that was not commited for 5 minit inisiate a shedule to commit in 5s
+    
+==
+START
+│
+├── validate-ssh
+│
+├── discover-git-repositories
+│
+├── filter-repositories
+│   ├── skip if .lazyignore exists
+│   └── create watchlist
+│
+├── initialize-watchers
+│
+└── event-loop
+    │
+    ├── filesystem-change-detected
+    │
+    ├── analyze-repository-state
+    │   ├── uncommitted-changes?
+    │   ├── staged-changes?
+    │   ├── unpushed-commits?
+    │   └── merge-conflicts?
+    │
+    ├── decision-engine
+    │
+    ├── if uncommitted-changes
+    │   ├── check oldest file change age
+    │   └── if age > 5min
+    │       └── schedule auto-commit in 5s
+    │
+    ├── if unpushed-commits
+    │   └── schedule auto-push in 5s
+    │
+    └── execute-actions
+        ├── auto-commit
+        └── auto-push
