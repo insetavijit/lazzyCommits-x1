@@ -1,22 +1,47 @@
 package scanner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-// RepoInfo holds detailed information about a discovered repository.
+// RepoInfo holds basic information about a discovered repository.
 type RepoInfo struct {
-	Path        string
-	Branch      string
-	Commits     int
-	IsDirty     bool
-	Untracked   int
-	Modified    int
-	Staged      int
+	Path      string
+	Branch    string
+	Commits   int
+	IsDirty   bool
+	Untracked int
+	Modified  int
+	Staged    int
+}
+
+// RemoteInfo holds remote name and URL.
+type RemoteInfo struct {
+	Name string   `json:"name"`
+	URLs []string `json:"urls"`
+}
+
+// LastCommitInfo holds metadata about the latest commit.
+type LastCommitInfo struct {
+	Hash    string `json:"hash"`
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+	Message string `json:"message"`
+}
+
+// RepoBrief holds comprehensive information about a repository.
+type RepoBrief struct {
+	RepoInfo
+	Remotes    []RemoteInfo   `json:"remotes"`
+	LastCommit LastCommitInfo `json:"lastCommit"`
+	Unpushed   int            `json:"unpushed"`
 }
 
 // Scan searches for Git repositories downwards from the given root directory.
@@ -135,4 +160,61 @@ func GetRepoInfo(path string) RepoInfo {
 	}
 
 	return info
+}
+
+// GetRepoBrief extracts detailed Git metadata from a repository path.
+func GetRepoBrief(path string) RepoBrief {
+	base := GetRepoInfo(path)
+	brief := RepoBrief{RepoInfo: base}
+
+	repo, err := git.PlainOpen(path)
+	if err != nil {
+		return brief
+	}
+
+	// Get Remotes
+	remotes, err := repo.Remotes()
+	if err == nil {
+		for _, r := range remotes {
+			brief.Remotes = append(brief.Remotes, RemoteInfo{
+				Name: r.Config().Name,
+				URLs: r.Config().URLs,
+			})
+		}
+	}
+
+	// Get Last Commit
+	head, err := repo.Head()
+	if err == nil {
+		commit, err := repo.CommitObject(head.Hash())
+		if err == nil {
+			brief.LastCommit = LastCommitInfo{
+				Hash:    commit.Hash.String(),
+				Author:  fmt.Sprintf("%s <%s>", commit.Author.Name, commit.Author.Email),
+				Date:    commit.Author.When.Format(time.RFC3339),
+				Message: commit.Message,
+			}
+		}
+
+		// Calculate Unpushed (compare HEAD with origin/branch)
+		remoteRefName := plumbing.ReferenceName("refs/remotes/origin/" + head.Name().Short())
+		remoteRef, err := repo.Reference(remoteRefName, true)
+		if err == nil {
+			// Count commits between remote and local
+			cIter, err := repo.Log(&git.LogOptions{From: head.Hash()})
+			if err == nil {
+				count := 0
+				_ = cIter.ForEach(func(c *object.Commit) error {
+					if c.Hash == remoteRef.Hash() {
+						return fmt.Errorf("stop")
+					}
+					count++
+					return nil
+				})
+				brief.Unpushed = count
+			}
+		}
+	}
+
+	return brief
 }
