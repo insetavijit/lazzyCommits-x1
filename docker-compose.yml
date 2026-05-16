@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  lazycommit:
+    build: .
+    container_name: lazycommit-test
+    volumes:
+      # Map logs to local directory for easy inspection
+      - ./docker-logs:/root/.lazycommit/logs
+    restart: unless-stopped
+    # Interactive mode to allow status checks via exec
+    tty: true
+    stdin_open: true

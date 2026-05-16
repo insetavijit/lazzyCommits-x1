@@ -1,0 +1,480 @@
+================================================================================
+ lazyCommit — Project Brief
+ Language: Go  |  Version: 0.1  |  Date: 2026-05-16
+================================================================================
+
+--------------------------------------------------------------------------------
+ THE ONE-LINE PITCH
+--------------------------------------------------------------------------------
+
+A silent, always-on Go daemon that watches multiple local Git repositories,
+automatically pushes unpushed commits, and auto-commits forgotten file changes
+so developers never silently lose work or fall behind on syncing.
+
+
+--------------------------------------------------------------------------------
+ THE PROBLEM
+--------------------------------------------------------------------------------
+
+Developers strand or lose work in three recurring ways:
+
+  1. Commit but forget to push — work sits local, invisible to teammates and
+     unprotected against hardware failure.
+
+  2. Modify files, get interrupted, never commit — hours of progress exist only
+     in the working tree.
+
+  3. Every existing tool (gitwatch, git-auto-commit, git-watch-node) is a
+     single-repo, manual-start, terminal-attached watcher — not a managed
+     multi-repo background service.
+
+lazyCommit solves all three, silently, without the developer thinking about it.
+
+
+--------------------------------------------------------------------------------
+ WHY GO
+--------------------------------------------------------------------------------
+
+  - Single static binary per platform. No runtime. No environment. No version
+    conflicts. curl | sh and it works forever.
+
+  - Goroutines map 1-to-1 onto the architecture. Each watched repo is a
+    goroutine. The IPC server is a goroutine. The retry queue is a goroutine.
+    Go channels make inter-component communication clean and natural.
+
+  - go-git is a pure-Go Git implementation. No libgit2. No subprocess shelling.
+    Full Git object model access compiled directly into the binary.
+
+  - fsnotify is the gold-standard cross-platform file watcher used across the
+    entire Go ecosystem. It wraps inotify (Linux), FSEvents (macOS), and
+    ReadDirectoryChangesW (Windows) behind one clean API.
+
+  - cobra + viper cover CLI and config with zero friction.
+
+  - Fast iteration. No borrow checker. Small language spec. Structural refactors
+    that hurt in Rust are easy in Go.
+
+
+--------------------------------------------------------------------------------
+ CORE BEHAVIORS
+--------------------------------------------------------------------------------
+
+  BEHAVIOR A — Lazy Push
+  ~~~~~~~~~~~~~~~~~~~~~~
+  When a commit exists locally that has not been pushed to the configured
+  remote, wait a short configurable window (default: 5 seconds of post-commit
+  inactivity) then push automatically. The developer committed — lazyCommit
+  handles the push.
+
+  BEHAVIOR B — Lazy Commit
+  ~~~~~~~~~~~~~~~~~~~~~~~~
+  When tracked files have been modified but no commit has been made, and those
+  files have been idle (no further saves) for a configurable window
+  (default: 5 minutes), auto-commit them with a generated message and push.
+  This protects work the developer forgot to save into version control.
+
+  Both behaviors are independently toggleable per repository.
+
+
+--------------------------------------------------------------------------------
+ WHAT "SILENT" MEANS
+--------------------------------------------------------------------------------
+
+  - No terminal window left open.
+  - No stdout output unless the developer explicitly runs `lazycommit status`.
+  - Starts automatically on login via launchd (macOS), systemd --user (Linux),
+    or Task Scheduler (Windows).
+  - All actions written to a structured log file only.
+  - Optional desktop notifications (off by default) for Lazy Commit events only.
+    Routine pushes never produce a notification.
+
+
+--------------------------------------------------------------------------------
+ PROJECT IDENTITY
+--------------------------------------------------------------------------------
+
+  Binary name       lazycommit
+  Config file       ~/.lazycommit/config.toml
+  Log directory     ~/.lazycommit/logs/
+  Socket path       ~/.lazycommit/daemon.sock
+  PID file          ~/.lazycommit/daemon.pid
+  Retry queue       ~/.lazycommit/retry-queue.json
+  Language          Go 1.22+
+  Module path       github.com/lazycommit/lazycommit
+  Distribution      Single binary. Homebrew tap. curl install script.
+                    npm wrapper package for teams already on npm.
+  License           MIT
+
+
+--------------------------------------------------------------------------------
+ ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------------------
+
+  lazycommit binary
+  │
+  ├── CLI (cobra)
+  │     Commands: start, stop, restart, status, pause, resume,
+  │               add, remove, logs, config
+  │     Talks to the running daemon via Unix socket (IPC client)
+  │
+  └── Daemon (long-running process, detached)
+        │
+        ├── Config Loader        Reads config.toml on start, watches for
+        │                        live changes via fsnotify, reconciles the
+        │                        repo registry without restarting.
+        │
+        ├── Repo Registry        Thread-safe map of active repos.
+        │                        Add / remove repos at runtime without
+        │                        stopping the daemon.
+        │
+        ├── Watcher Pool         One fsnotify watcher goroutine per repo.
+        │                        Normalizes events, applies ignore patterns,
+        │                        emits FILE_CHANGED and COMMIT_DETECTED
+        │                        events onto per-repo channels.
+        │
+        ├── State Machine        One goroutine per repo.
+        │                        Owns the repo's timer and current state.
+        │                        Drives all transitions (see State section).
+        │
+        ├── Safety Guard         Runs before every write operation.
+        │                        Nine hard checks — none configurable away.
+        │                        (See Safety Rules section.)
+        │
+        ├── Git Engine           Wraps go-git.
+        │                        status, stage (tracked only), commit, push.
+        │                        Generates diff summary for Commit Composer.
+        │
+        ├── Commit Composer      Builds auto-commit messages from diff output.
+        │                        All messages prefixed with "auto:" for easy
+        │                        grep and squash before PRs.
+        │
+        ├── Retry Queue          Persisted to retry-queue.json.
+        │                        Survives daemon restarts.
+        │                        Exponential backoff: 10s, 30s, 2m, 10m, 30m.
+        │                        After 5 failures: dead-letter, log, alert.
+        │
+        ├── Activity Logger      Structured JSON lines to per-repo log files.
+        │                        Fields: ts, repo, branch, action, files,
+        │                        commitSha, outcome, durationMs.
+        │
+        └── IPC Server           Unix socket server (net.Listener).
+                                 Handles CLI queries from lazycommit commands.
+                                 Returns live daemon state as JSON.
+
+
+--------------------------------------------------------------------------------
+ PER-REPO STATE MACHINE
+--------------------------------------------------------------------------------
+
+  States
+  ------
+  IDLE          Nothing pending. Watching quietly.
+  DIRTY         Files changed. Idle timer counting down.
+  COMMITTING    Idle timer fired. Running Safety Guard then Git Engine.
+  UNPUSHED      Commits exist that haven't been pushed. Push delay counting.
+  PUSHING       Push in flight.
+  PAUSED        All auto-actions suppressed until resume or TTL expiry.
+  ERROR         Last action failed permanently. Waiting for manual resolution.
+
+  Transitions
+  -----------
+  IDLE       + FILE_CHANGED       --> DIRTY       (start idle timer)
+  IDLE       + COMMIT_DETECTED    --> UNPUSHED     (start push delay timer)
+
+  DIRTY      + FILE_CHANGED       --> DIRTY        (reset idle timer)
+  DIRTY      + COMMIT_DETECTED    --> UNPUSHED      (cancel idle timer)
+  DIRTY      + idle timer fires   --> COMMITTING
+
+  COMMITTING + safety guard fails --> IDLE          (log warning)
+  COMMITTING + git error          --> IDLE          (log error)
+  COMMITTING + success            --> UNPUSHED
+
+  UNPUSHED   + FILE_CHANGED       --> DIRTY         (cancel push timer)
+  UNPUSHED   + push timer fires   --> PUSHING
+
+  PUSHING    + success            --> IDLE
+  PUSHING    + failure            --> IDLE           (enqueue retry)
+
+  Any state + pause command       --> PAUSED
+  PAUSED     + resume / TTL       --> IDLE
+
+
+--------------------------------------------------------------------------------
+ SAFETY RULES (HARD-CODED, NON-CONFIGURABLE)
+--------------------------------------------------------------------------------
+
+  These nine checks run before every write operation. Any failure aborts
+  the action silently, logs a warning, and returns the repo to IDLE.
+
+  1.  MERGE_HEAD exists in .git/        --> merge in progress, stand down
+  2.  REBASE_MERGE exists in .git/      --> rebase in progress, stand down
+  3.  REBASE_APPLY exists in .git/      --> rebase in progress, stand down
+  4.  HEAD is detached                  --> no branch to push to, stand down
+  5.  Staged files exist in index       --> developer is mid-commit, stand down
+  6.  Branch is in protectedBranches    --> hands off, stand down
+  7.  Changeset includes untracked file --> only git add -u, never add new files
+  8.  Any changed file exceeds 50 MB    --> too large, stand down, log warning
+  9.  Local branch has diverged from    --> ahead AND behind means conflict risk,
+      remote (ahead and behind)            stand down, log warning
+
+
+--------------------------------------------------------------------------------
+ COMMIT MESSAGE FORMAT
+--------------------------------------------------------------------------------
+
+  All auto-commits use the prefix "auto:" so they are trivially identifiable.
+
+  1 file changed:
+      auto: modified src/auth.go
+
+  2-3 files changed:
+      auto: modified auth.go, added auth_test.go
+
+  4+ files changed:
+      auto: 6 files changed in src/, internal/
+
+  Fallback (diff unavailable):
+      auto: changes detected at 2026-05-16T14:32:11Z
+
+  Developers can clean these up before a PR with:
+      git rebase -i   (squash all "auto:" commits into one real commit)
+  or inspect them with:
+      git log --oneline | grep "^auto:"
+
+
+--------------------------------------------------------------------------------
+ CONFIGURATION SCHEMA  (~/.lazycommit/config.toml)
+--------------------------------------------------------------------------------
+
+  [global]
+  push_delay_seconds         = 5
+  idle_before_commit_minutes = 5
+  notifications              = false
+  log_retention_days         = 30
+  max_file_size_mb           = 50
+
+  [[repos]]
+  path               = "/Users/dev/projects/my-app"
+  enabled            = true
+  lazy_push          = true
+  lazy_commit        = true
+  protected_branches = ["main", "master", "production"]
+  ignore_patterns    = ["*.env", "secrets/", "*.key"]
+
+    [repos.overrides]
+    push_delay_seconds         = 10
+    idle_before_commit_minutes = 2
+
+  [[repos]]
+  path        = "/Users/dev/notes"
+  enabled     = true
+  lazy_push   = true
+  lazy_commit = true
+
+    [repos.overrides]
+    idle_before_commit_minutes = 1
+
+
+--------------------------------------------------------------------------------
+ DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+
+  lazycommit/
+  ├── main.go                        Entry point. Boots CLI or daemon.
+  ├── go.mod
+  ├── go.sum
+  │
+  ├── cmd/                           CLI commands (cobra)
+  │   ├── root.go                    Root command, persistent flags
+  │   ├── start.go                   Spawn daemon, write PID file
+  │   ├── stop.go                    SIGTERM via PID file
+  │   ├── restart.go
+  │   ├── status.go                  Query daemon via IPC, render table
+  │   ├── pause.go                   Pause a repo (optional --duration)
+  │   ├── resume.go
+  │   ├── add.go                     Add repo to config + live-register
+  │   ├── remove.go
+  │   ├── logs.go                    Tail per-repo activity log
+  │   └── config.go                  Open config in $EDITOR
+  │
+  ├── internal/
+  │   │
+  │   ├── daemon/
+  │   │   ├── daemon.go              Bootstrap, main loop, graceful shutdown
+  │   │   ├── registry.go            Thread-safe repo map, add/remove at runtime
+  │   │   ├── ipc_server.go          Unix socket server, JSON request/response
+  │   │   └── config_watcher.go      fsnotify watch on config.toml, hot-reload
+  │   │
+  │   ├── watcher/
+  │   │   └── repo_watcher.go        fsnotify wrapper, ignore patterns,
+  │   │                              emits normalized events to state machine
+  │   │
+  │   ├── state/
+  │   │   └── state_machine.go       Per-repo FSM, timer management,
+  │   │                              goroutine lifecycle
+  │   │
+  │   ├── git/
+  │   │   ├── engine.go              go-git wrapper: status, stage, commit, push
+  │   │   └── safety_guard.go        Nine pre-action safety checks
+  │   │
+  │   ├── composer/
+  │   │   └── commit_composer.go     Diff-based message generator
+  │   │
+  │   ├── queue/
+  │   │   └── retry_queue.go         Durable JSON-backed push retry queue
+  │   │
+  │   ├── logger/
+  │   │   └── activity_logger.go     Structured JSON line logger per repo
+  │   │
+  │   ├── config/
+  │   │   ├── loader.go              Read, parse, validate config.toml
+  │   │   └── schema.go              Config struct definitions
+  │   │
+  │   └── ipc/
+  │       ├── client.go              CLI-side IPC client
+  │       └── protocol.go            Shared request/response types
+  │
+  ├── pkg/
+  │   └── notify/
+  │       └── notify.go              Optional desktop notification wrapper
+  │                                  (osascript / notify-send / toast)
+  │
+  └── test/
+      ├── unit/
+      └── integration/
+          └── fixtures/              Bare git repos for integration tests
+
+
+--------------------------------------------------------------------------------
+ DEPENDENCY STACK
+--------------------------------------------------------------------------------
+
+  go-git (github.com/go-git/go-git)
+      Pure-Go Git implementation. No libgit2. No subprocess.
+      Handles status, staging, committing, pushing, diff.
+
+  fsnotify (github.com/fsnotify/fsnotify)
+      Cross-platform file system notifications.
+      inotify on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows.
+
+  cobra (github.com/spf13/cobra)
+      CLI framework. Subcommands, flags, help generation, shell completion.
+
+  viper (github.com/spf13/viper)
+      Config file management. TOML parsing, live reload, env var binding.
+
+  zap (go.uber.org/zap)
+      Structured JSON logging. Fast, zero-allocation in hot paths.
+
+  testify (github.com/stretchr/testify)
+      Test assertions and mocking for unit and integration tests.
+
+  No other runtime dependencies. Everything compiles into the single binary.
+
+
+--------------------------------------------------------------------------------
+ STATUS COMMAND OUTPUT (WIREFRAME)
+--------------------------------------------------------------------------------
+
+  $ lazycommit status
+
+  lazycommit v0.1.0  daemon running  pid 38291  uptime 4h 12m
+
+  REPO              BRANCH           STATE       LAST ACTION
+  ----------------------------------------------------------------
+  my-app            feature/auth     IDLE        pushed 3m ago
+  api-server        main             DIRTY       watching (1m 42s)
+  notes             main             UNPUSHED    commit ready
+  old-project       main             PAUSED      resumes at 18:00
+
+  4 repos  |  1 pending push  |  0 in retry queue  |  0 errors
+
+
+--------------------------------------------------------------------------------
+ DISTRIBUTION PLAN
+--------------------------------------------------------------------------------
+
+  Primary: GitHub Releases
+      Prebuilt binaries per platform attached to each release tag.
+      Platforms: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64,
+                 windows/amd64.
+      Built via GitHub Actions on tag push.
+
+  Homebrew tap:
+      brew install lazycommit/tap/lazycommit
+
+  Curl install script:
+      curl -fsSL https://lazycommit.dev/install.sh | sh
+      Detects OS and arch, downloads correct binary, places in /usr/local/bin.
+
+  npm wrapper (optional, for teams already on npm):
+      npm install -g lazycommit
+      Package downloads the correct platform binary as a postinstall step.
+      Thin JS wrapper delegates all execution to the binary.
+
+  Manual:
+      Download binary, chmod +x, move to PATH. Done.
+
+
+--------------------------------------------------------------------------------
+ AUTOSTART SETUP (installed by `lazycommit start --install`)
+--------------------------------------------------------------------------------
+
+  macOS       Writes a launchd plist to ~/Library/LaunchAgents/
+              com.lazycommit.daemon.plist
+              launchctl load ... starts it immediately and on every login.
+
+  Linux       Writes a systemd unit to ~/.config/systemd/user/
+              lazycommit.service
+              systemctl --user enable --now lazycommit
+
+  Windows     Registers a Task Scheduler entry via schtasks.
+              Trigger: on user login. Action: run lazycommit.exe daemon.
+
+
+--------------------------------------------------------------------------------
+ WHAT LAZYCOMMIT IS NOT
+--------------------------------------------------------------------------------
+
+  Not a CI/CD tool         No test runners, no build steps, no deployment.
+  Not a sync tool          Push only. Never pulls, never fetches.
+  Not a conflict resolver  Backs off on any divergence. No force pushes. Ever.
+  Not a Git host           Talks only to the remote already configured in .git.
+  Not a replacement for    Auto-commits are clearly labeled "auto:" and easy
+  intentional commits      to squash before a PR. They are a safety net,
+                           not a substitute for real commit discipline.
+
+
+--------------------------------------------------------------------------------
+ MILESTONE PLAN
+--------------------------------------------------------------------------------
+
+  v0.1    Binary skeleton, cobra CLI, config loader, daemon process with
+          PID file, single-repo fsnotify watcher, lazy push only.
+
+  v0.2    Per-repo state machine, idle timer, lazy commit with basic message,
+          safety guard (all nine checks).
+
+  v0.3    Multi-repo support, per-repo config overrides, repo registry,
+          config hot-reload via fsnotify.
+
+  v0.4    Retry queue (durable JSON), IPC server + client, full CLI
+          (start, stop, status, pause, resume, add, remove).
+
+  v0.5    Commit composer (diff-based messages), structured JSON logger,
+          `lazycommit logs` command.
+
+  v0.6    Autostart scripts (launchd, systemd, Task Scheduler),
+          `lazycommit start --install` command.
+
+  v0.7    Cross-platform testing and hardening. Edge cases:
+          detached HEAD, empty repos, no remote configured,
+          SSH key not loaded, large monorepos.
+
+  v1.0    Stable public release. Full README. Homebrew tap.
+          curl install script. GitHub Actions release pipeline. npm wrapper.
+
+
+--------------------------------------------------------------------------------
+ Brief version: 0.1  |  Language: Go  |  Date: 2026-05-16
+================================================================================
