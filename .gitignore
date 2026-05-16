@@ -3,3 +3,4 @@ test-repo/
 test-remote.git/
 docker-logs/
 *.log
+Sandbox/
