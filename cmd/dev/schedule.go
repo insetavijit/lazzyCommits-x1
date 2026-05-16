@@ -12,11 +12,12 @@ import (
 )
 
 var (
-	listFlag   bool
-	commitFlag bool
-	pushFlag   bool
-	runFlag    string
-	timeFlag   string
+	listFlag      bool
+	commitFlag    bool
+	pushFlag      bool
+	terminateFlag string
+	runFlag       string
+	timeFlag      string
 )
 
 type ScheduleResponse struct {
@@ -29,20 +30,45 @@ type ScheduleResponse struct {
 	Message string             `json:"message,omitempty"`
 }
 
+type TerminateResponse struct {
+	ID      string `json:"id"`
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
 func NewScheduleCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedule [repo_path]",
-		Short: "Schedule a Git action or shell command (JSON output)",
-		Long: `Schedule a commit, push, or any shell command for a repository after a specific delay.
+		Short: "Schedule or terminate a Git action (JSON output)",
+		Long: `Schedule a commit, push, or any shell command. 
+Or terminate a scheduled task by ID.
 Examples:
   lazycommit schedule . --commit -t 5s
-  lazycommit schedule . --push -t 10m
-  lazycommit schedule . --run "npm run build" -t 15s`,
+  lazycommit schedule --terminate 12345
+  lazycommit schedule --list`,
 		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			client, err := ipc.NewClient()
 			if err != nil {
 				core.PrintErrorJSON(err)
+				return
+			}
+
+			if terminateFlag != "" {
+				resp, err := client.TerminateTask(terminateFlag)
+				if err != nil {
+					core.PrintErrorJSON(err)
+					return
+				}
+				if !resp.Success {
+					core.PrintErrorJSON(fmt.Errorf(resp.Error))
+					return
+				}
+				core.PrintJSON(TerminateResponse{
+					ID:      terminateFlag,
+					Success: true,
+					Message: "Task terminated successfully",
+				})
 				return
 			}
 
@@ -112,6 +138,7 @@ Examples:
 	cmd.Flags().BoolVarP(&listFlag, "list", "l", false, "List all scheduled tasks")
 	cmd.Flags().BoolVarP(&commitFlag, "commit", "c", false, "Schedule a commit")
 	cmd.Flags().BoolVarP(&pushFlag, "push", "p", false, "Schedule a push")
+	cmd.Flags().StringVarP(&terminateFlag, "terminate", "X", "", "Terminate a scheduled task by ID")
 	cmd.Flags().StringVarP(&runFlag, "run", "r", "", "Schedule a custom shell command")
 	cmd.Flags().StringVarP(&timeFlag, "time", "t", "5s", "Delay before execution (e.g. 5s, 2m, 1h)")
 

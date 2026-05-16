@@ -134,6 +134,14 @@ func (s *IPCServer) handleConnection(conn net.Conn) {
 			})
 		}
 		response = ipc.ScheduledListResponse{Tasks: list}
+
+	case "terminate_task":
+		var req ipc.TerminateTaskRequest
+		if err := json.Unmarshal(envelope.Payload, &req); err != nil {
+			response = ipc.TerminateTaskResponse{Success: false, Error: "invalid payload"}
+		} else {
+			response = s.handleTerminateTask(req)
+		}
 	}
 
 	if response != nil {
@@ -141,6 +149,13 @@ func (s *IPCServer) handleConnection(conn net.Conn) {
 			s.logger.Error("Failed to encode IPC response", zap.Error(err))
 		}
 	}
+}
+
+func (s *IPCServer) handleTerminateTask(req ipc.TerminateTaskRequest) ipc.TerminateTaskResponse {
+	if err := s.scheduler.Terminate(req.ID); err != nil {
+		return ipc.TerminateTaskResponse{Success: false, Error: err.Error()}
+	}
+	return ipc.TerminateTaskResponse{Success: true}
 }
 
 func (s *IPCServer) handleTask(req ipc.TaskRequest) ipc.TaskResponse {

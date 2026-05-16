@@ -28,7 +28,7 @@ func (c *Client) GetStatus() (*StatusResponse, error) {
 	defer conn.Close()
 
 	envelope := struct {
-		Type    string `json:"type"`
+		Type    string      `json:"type"`
 		Payload interface{} `json:"payload"`
 	}{
 		Type: "status",
@@ -54,7 +54,7 @@ func (c *Client) ScheduleTask(repo, taskType, delay string, args []string) (*Tas
 	defer conn.Close()
 
 	envelope := struct {
-		Type    string `json:"type"`
+		Type    string      `json:"type"`
 		Payload interface{} `json:"payload"`
 	}{
 		Type: "task",
@@ -103,3 +103,31 @@ func (c *Client) GetScheduledTasks() (*ScheduledListResponse, error) {
 	return &resp, nil
 }
 
+func (c *Client) TerminateTask(id string) (*TerminateTaskResponse, error) {
+	conn, err := net.Dial("unix", c.socket)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	envelope := struct {
+		Type    string      `json:"type"`
+		Payload interface{} `json:"payload"`
+	}{
+		Type: "terminate_task",
+		Payload: TerminateTaskRequest{
+			ID: id,
+		},
+	}
+
+	if err := json.NewEncoder(conn).Encode(envelope); err != nil {
+		return nil, err
+	}
+
+	var resp TerminateTaskResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}

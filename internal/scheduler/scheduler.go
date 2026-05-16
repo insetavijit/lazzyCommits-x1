@@ -96,6 +96,19 @@ func (s *Scheduler) All() []*Task {
 	return all
 }
 
+func (s *Scheduler) Terminate(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.tasks[id]; !exists {
+		return fmt.Errorf("task with ID %s not found", id)
+	}
+
+	delete(s.tasks, id)
+	s.logger.Info("Task terminated", zap.String("id", id))
+	return s.save()
+}
+
 func (s *Scheduler) load() error {
 	if _, err := os.Stat(s.filePath); os.IsNotExist(err) {
 		return nil

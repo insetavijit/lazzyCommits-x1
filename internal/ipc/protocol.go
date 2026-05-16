@@ -40,3 +40,12 @@ type TaskInfo struct {
 	Repo  string    `json:"repo"`
 	RunAt time.Time `json:"runAt"`
 }
+
+type TerminateTaskRequest struct {
+	ID string `json:"id"`
+}
+
+type TerminateTaskResponse struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
