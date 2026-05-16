@@ -36,9 +36,16 @@ var scanAllCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Printf("Found %d repositories:\n", len(repos))
+		fmt.Printf("Found %d repositories:\n\n", len(repos))
+		fmt.Printf("%-50s | %-15s | %-7s | %s\n", "PATH", "BRANCH", "COMMITS", "STATUS")
+		fmt.Println(filepath.Join("--------------------------------------------------", "--------------------------------------------------"))
+
 		for _, repo := range repos {
-			fmt.Println(repo)
+			status := "CLEAN"
+			if repo.IsDirty {
+				status = fmt.Sprintf("DIRTY (S:%d M:%d U:%d)", repo.Staged, repo.Modified, repo.Untracked)
+			}
+			fmt.Printf("%-50s | %-15s | %-7d | %s\n", truncateRepoPath(repo.Path, 50), repo.Branch, repo.Commits, status)
 		}
 	},
 }
