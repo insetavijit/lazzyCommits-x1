@@ -13,8 +13,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var daemonDebugFlag bool
+
 func NewDaemonCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:    "daemon",
 		Short:  "Run the lazyCommit daemon",
 		Hidden: true,
@@ -24,7 +26,13 @@ func NewDaemonCmd() *cobra.Command {
 				log.Fatalf("Failed to load config: %v", err)
 			}
 
-			logger, _ := zap.NewProduction()
+			var logger *zap.Logger
+			if daemonDebugFlag {
+				loggerConfig := zap.NewDevelopmentConfig()
+				logger, _ = loggerConfig.Build()
+			} else {
+				logger, _ = zap.NewProduction()
+			}
 			defer logger.Sync()
 
 			d := daemon.New(cfg, logger)
@@ -45,4 +53,7 @@ func NewDaemonCmd() *cobra.Command {
 			}
 		},
 	}
+
+	cmd.Flags().BoolVarP(&daemonDebugFlag, "debug", "d", false, "Enable debug logging")
+	return cmd
 }
