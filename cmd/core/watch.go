@@ -82,7 +82,7 @@ Outputs real-time file change events as structured JSON.`,
 			// Printer goroutine
 			go func() {
 				for ev := range eventChan {
-					PrintJSON(ev)
+					PrintJSON("watch", ev)
 				}
 			}()
 

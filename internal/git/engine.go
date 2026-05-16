@@ -51,6 +51,7 @@ func (e *Engine) StageAndCommitWithMsg(repoPath string, msg string) error {
 
 	// Stage tracked files that are modified or deleted, and untracked files
 	stagedStatus := make(git.Status)
+	hasChanges := false
 	for path, s := range status {
 		if s.Worktree == git.Modified || s.Worktree == git.Deleted || s.Worktree == git.Untracked {
 			_, err := worktree.Add(path)
@@ -58,10 +59,27 @@ func (e *Engine) StageAndCommitWithMsg(repoPath string, msg string) error {
 				return fmt.Errorf("failed to stage file %s: %w", path, err)
 			}
 			stagedStatus[path] = s
+			hasChanges = true
 		}
 	}
 
-	if len(stagedStatus) == 0 {
+	// Submodule support: check for changed submodules
+	submodules, err := worktree.Submodules()
+	if err == nil {
+		for _, sub := range submodules {
+			status, err := sub.Status()
+			if err == nil && !status.IsClean() {
+				// Stage the submodule pointer change
+				_, err := worktree.Add(sub.Config().Path)
+				if err == nil {
+					e.logger.Info("Staged submodule change", zap.String("submodule", sub.Config().Path))
+					hasChanges = true
+				}
+			}
+		}
+	}
+
+	if len(stagedStatus) == 0 && !hasChanges {
 		e.logger.Info("No changes to commit", zap.String("path", repoPath))
 		return nil
 	}

@@ -28,7 +28,7 @@ func NewPushCmd() *cobra.Command {
 
 			absPath, err := filepath.Abs(repoPath)
 			if err != nil {
-				PrintErrorJSON(err)
+				PrintErrorJSON("push", err)
 				return
 			}
 
@@ -38,17 +38,17 @@ func NewPushCmd() *cobra.Command {
 
 			res := guard.Check(absPath, []string{"main", "master"}, 50)
 			if !res.Passed {
-				PrintErrorJSON(fmt.Errorf("safety check failed: %s", res.Reason))
+				PrintErrorJSON("push", fmt.Errorf("safety check failed: %s", res.Reason))
 				return
 			}
 
 			err = engine.Push(absPath)
 			if err != nil {
-				PrintErrorJSON(err)
+				PrintErrorJSON("push", err)
 				return
 			}
 
-			PrintJSON(PushResponse{
+			PrintJSON("push", PushResponse{
 				Repo:    absPath,
 				Success: true,
 				Message: "Push successful",

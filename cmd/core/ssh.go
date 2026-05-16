@@ -15,10 +15,10 @@ func NewSSHCmd() *cobra.Command {
 			email := args[0]
 			res, err := ssh.Setup(email)
 			if err != nil {
-				PrintErrorJSON(err)
+				PrintErrorJSON("ssh", err)
 				return
 			}
-			PrintJSON(res)
+			PrintJSON("ssh", res)
 		},
 	}
 }

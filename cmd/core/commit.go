@@ -43,7 +43,7 @@ This command executes directly (bypassing background safety guards) to provide a
 
 			absPath, err := filepath.Abs(repoPath)
 			if err != nil {
-				PrintErrorJSON(err)
+				PrintErrorJSON("commit", err)
 				return
 			}
 
@@ -63,7 +63,7 @@ This command executes directly (bypassing background safety guards) to provide a
 			// Get maximum info for the caller
 			brief := scanner.GetRepoBrief(absPath)
 
-			PrintJSON(CommitResponse{
+			PrintJSON("commit", CommitResponse{
 				Repo:    absPath,
 				Success: success,
 				Message: errMsg,

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -47,9 +49,55 @@ type RepoBrief struct {
 	Unpushed   int            `json:"unpushed"`
 }
 
+// briefConcurrent performs GetRepoBrief for multiple paths in parallel.
+func briefConcurrent(paths []string) []RepoBrief {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	numWorkers := runtime.NumCPU()
+	if numWorkers > len(paths) {
+		numWorkers = len(paths)
+	}
+
+	pathChan := make(chan string, len(paths))
+	resultChan := make(chan RepoBrief, len(paths))
+	var wg sync.WaitGroup
+
+	// Start workers
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range pathChan {
+				resultChan <- GetRepoBrief(path)
+			}
+		}()
+	}
+
+	// Feed paths
+	for _, path := range paths {
+		pathChan <- path
+	}
+	close(pathChan)
+
+	// Wait for workers in a separate goroutine to close resultChan
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	var results []RepoBrief
+	for res := range resultChan {
+		results = append(results, res)
+	}
+
+	return results
+}
+
 // Scan searches for Git repositories downwards from the given root directory.
 func Scan(root string) ([]RepoBrief, error) {
-	var repos []RepoBrief
+	var paths []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return filepath.SkipDir
@@ -61,9 +109,7 @@ func Scan(root string) ([]RepoBrief, error) {
 		// Skip common directories that won't contain repos or are too large
 		name := info.Name()
 		if name == ".git" {
-			repoPath := filepath.Dir(path)
-			repoBrief := GetRepoBrief(repoPath)
-			repos = append(repos, repoBrief)
+			paths = append(paths, filepath.Dir(path))
 			return filepath.SkipDir
 		}
 		if name == "node_modules" || name == "vendor" || name == ".idea" || name == ".vscode" {
@@ -72,13 +118,16 @@ func Scan(root string) ([]RepoBrief, error) {
 
 		return nil
 	})
-	return repos, err
+	if err != nil {
+		return nil, err
+	}
+
+	return briefConcurrent(paths), nil
 }
 
 // ScanAll searches for Git repositories including parent directories of the root.
 func ScanAll(root string) ([]RepoBrief, error) {
-	var repos []RepoBrief
-	
+	var paths []string
 	uniquePaths := make(map[string]bool)
 
 	// Check parents upwards
@@ -87,7 +136,7 @@ func ScanAll(root string) ([]RepoBrief, error) {
 		gitDir := filepath.Join(current, ".git")
 		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
 			if !uniquePaths[current] {
-				repos = append(repos, GetRepoBrief(current))
+				paths = append(paths, current)
 				uniquePaths[current] = true
 			}
 		}
@@ -100,19 +149,34 @@ func ScanAll(root string) ([]RepoBrief, error) {
 	}
 
 	// Scan downwards from root
-	downstream, err := Scan(root)
-	if err != nil {
-		return repos, err
-	}
-
-	for _, brief := range downstream {
-		if !uniquePaths[brief.Path] {
-			repos = append(repos, brief)
-			uniquePaths[brief.Path] = true
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return filepath.SkipDir
 		}
+		if !info.IsDir() {
+			return nil
+		}
+
+		name := info.Name()
+		if name == ".git" {
+			repoPath := filepath.Dir(path)
+			if !uniquePaths[repoPath] {
+				paths = append(paths, repoPath)
+				uniquePaths[repoPath] = true
+			}
+			return filepath.SkipDir
+		}
+		if name == "node_modules" || name == "vendor" || name == ".idea" || name == ".vscode" {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
+	if err != nil {
+		// Log error but continue with whatever paths we found
 	}
 
-	return repos, nil
+	return briefConcurrent(paths), nil
 }
 
 // GetRepoInfo extracts Git metadata from a repository path.

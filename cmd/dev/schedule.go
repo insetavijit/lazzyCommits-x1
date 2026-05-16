@@ -50,21 +50,21 @@ Examples:
 		Run: func(cmd *cobra.Command, args []string) {
 			client, err := ipc.NewClient()
 			if err != nil {
-				core.PrintErrorJSON(err)
+				core.PrintErrorJSON("schedule", err)
 				return
 			}
 
 			if terminateFlag != "" {
 				resp, err := client.TerminateTask(terminateFlag)
 				if err != nil {
-					core.PrintErrorJSON(err)
+					core.PrintErrorJSON("schedule", err)
 					return
 				}
 				if !resp.Success {
-					core.PrintErrorJSON(fmt.Errorf(resp.Error))
+					core.PrintErrorJSON("schedule", fmt.Errorf(resp.Error))
 					return
 				}
-				core.PrintJSON(TerminateResponse{
+				core.PrintJSON("schedule", TerminateResponse{
 					ID:      terminateFlag,
 					Success: true,
 					Message: "Task terminated successfully",
@@ -75,10 +75,10 @@ Examples:
 			if listFlag {
 				resp, err := client.GetScheduledTasks()
 				if err != nil {
-					core.PrintErrorJSON(err)
+					core.PrintErrorJSON("schedule", err)
 					return
 				}
-				core.PrintJSON(resp)
+				core.PrintJSON("schedule", resp)
 				return
 			}
 
@@ -88,7 +88,7 @@ Examples:
 			}
 			absPath, err := filepath.Abs(repoPath)
 			if err != nil {
-				core.PrintErrorJSON(err)
+				core.PrintErrorJSON("schedule", err)
 				return
 			}
 
@@ -105,25 +105,25 @@ Examples:
 				taskType = "run"
 				taskArgs = []string{runFlag}
 			} else {
-				core.PrintErrorJSON(fmt.Errorf("either --commit, --push, or --run must be specified"))
+				core.PrintErrorJSON("schedule", fmt.Errorf("either --commit, --push, or --run must be specified"))
 				return
 			}
 
 			resp, err := client.ScheduleTask(absPath, taskType, timeFlag, taskArgs)
 			if err != nil {
-				core.PrintErrorJSON(err)
+				core.PrintErrorJSON("schedule", err)
 				return
 			}
 
 			if !resp.Success {
-				core.PrintErrorJSON(fmt.Errorf(resp.Error))
+				core.PrintErrorJSON("schedule", fmt.Errorf(resp.Error))
 				return
 			}
 
 			// Get maximum info for the caller
 			brief := scanner.GetRepoBrief(absPath)
 
-			core.PrintJSON(ScheduleResponse{
+			core.PrintJSON("schedule", ScheduleResponse{
 				Repo:    absPath,
 				Success: true,
 				ID:      resp.ID,

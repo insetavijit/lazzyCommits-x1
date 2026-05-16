@@ -20,12 +20,12 @@ func NewBriefCmd() *cobra.Command {
 
 			absPath, err := filepath.Abs(path)
 			if err != nil {
-				PrintErrorJSON(err)
+				PrintErrorJSON("brief", err)
 				return
 			}
 
 			brief := scanner.GetRepoBrief(absPath)
-			PrintJSON(brief)
+			PrintJSON("brief", brief)
 		},
 	}
 }

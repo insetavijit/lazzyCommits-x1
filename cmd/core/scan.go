@@ -20,17 +20,17 @@ func NewScanCmd() *cobra.Command {
 
 			absRoot, err := filepath.Abs(root)
 			if err != nil {
-				PrintErrorJSON(err)
+				PrintErrorJSON("scan", err)
 				return
 			}
 
 			repos, err := scanner.Scan(absRoot)
 			if err != nil {
-				PrintErrorJSON(err)
+				PrintErrorJSON("scan", err)
 				return
 			}
 
-			PrintJSON(repos)
+			PrintJSON("scan", repos)
 		},
 	}
 }
