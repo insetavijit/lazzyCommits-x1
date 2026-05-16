@@ -17,6 +17,7 @@ type GitEngine interface {
 	HasUnpushedCommits(repoPath string) (bool, error)
 	StageAndCommit(repoPath string) error
 	StageAndCommitWithMsg(repoPath string, msg string) error
+	StageAndCommitFiles(repoPath string, files []string, msg string) error
 }
 
 type Engine struct {
@@ -95,6 +96,40 @@ func (e *Engine) StageAndCommitWithMsg(repoPath string, msg string) error {
 	}
 
 	e.logger.Info("Successfully committed changes", zap.String("path", repoPath), zap.String("msg", finalMsg))
+	return nil
+}
+
+func (e *Engine) StageAndCommitFiles(repoPath string, files []string, msg string) error {
+	repo, err := git.PlainOpen(repoPath)
+	if err != nil {
+		return fmt.Errorf("failed to open repo: %w", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+
+	if len(files) == 0 {
+		return nil
+	}
+
+	for _, path := range files {
+		_, err := worktree.Add(path)
+		if err != nil {
+			return fmt.Errorf("failed to stage file %s: %w", path, err)
+		}
+	}
+
+	_, err = worktree.Commit(msg, &git.CommitOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	e.logger.Info("Successfully committed targeted files", 
+		zap.String("path", repoPath), 
+		zap.Int("num_files", len(files)),
+		zap.String("msg", msg))
 	return nil
 }
 
