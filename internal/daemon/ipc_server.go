@@ -96,12 +96,17 @@ func (s *IPCServer) handleConnection(conn net.Conn) {
 		resp := ipc.StatusResponse{}
 		for _, repo := range s.registry.All() {
 			stateStr := "UNKNOWN"
+			var scheduledAt time.Time
+			var scheduledMsg string
 			if repo.StateMachine != nil {
 				stateStr = string(repo.StateMachine.GetState())
+				scheduledAt, scheduledMsg = repo.StateMachine.GetScheduledInfo()
 			}
 			resp.Repos = append(resp.Repos, ipc.RepoStatus{
-				Path:  repo.Config.Path,
-				State: stateStr,
+				Path:         repo.Config.Path,
+				State:        stateStr,
+				ScheduledAt:  scheduledAt,
+				ScheduledMsg: scheduledMsg,
 			})
 		}
 		response = resp

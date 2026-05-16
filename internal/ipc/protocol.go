@@ -1,10 +1,14 @@
 package ipc
 
+import "time"
+
 type StatusRequest struct{}
 
 type RepoStatus struct {
-	Path   string `json:"path"`
-	State  string `json:"state"`
+	Path         string    `json:"path"`
+	State        string    `json:"state"`
+	ScheduledAt  time.Time `json:"scheduledAt,omitempty"`
+	ScheduledMsg string    `json:"scheduledMsg,omitempty"`
 }
 
 type StatusResponse struct {

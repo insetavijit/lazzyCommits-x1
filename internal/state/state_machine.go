@@ -48,6 +48,7 @@ type StateMachine struct {
 	// Manual schedule
 	manualTimer *time.Timer
 	manualMsg   string
+	manualAt    time.Time
 }
 
 func NewStateMachine(
@@ -108,7 +109,17 @@ func (sm *StateMachine) ScheduleManualCommit(delay time.Duration, msg string) {
 	sm.logger.Info("Scheduling manual commit", zap.Duration("delay", delay), zap.String("message", msg))
 	sm.stopManualTimer()
 	sm.manualMsg = msg
+	sm.manualAt = time.Now().Add(delay)
 	sm.manualTimer = time.NewTimer(delay)
+}
+
+func (sm *StateMachine) GetScheduledInfo() (time.Time, string) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.manualTimer == nil {
+		return time.Time{}, ""
+	}
+	return sm.manualAt, sm.manualMsg
 }
 
 func (sm *StateMachine) manualTimerChan() <-chan time.Time {
@@ -122,6 +133,7 @@ func (sm *StateMachine) stopManualTimer() {
 	if sm.manualTimer != nil {
 		sm.manualTimer.Stop()
 		sm.manualTimer = nil
+		sm.manualAt = time.Time{}
 	}
 }
 
