@@ -13,13 +13,16 @@ import (
 
 // RepoInfo holds basic information about a discovered repository.
 type RepoInfo struct {
-	Path      string
-	Branch    string
-	Commits   int
-	IsDirty   bool
-	Untracked int
-	Modified  int
-	Staged    int
+	Path           string   `json:"path"`
+	Branch         string   `json:"branch"`
+	Commits        int      `json:"commits"`
+	IsDirty        bool     `json:"isDirty"`
+	UntrackedCount int      `json:"untrackedCount"`
+	ModifiedCount  int      `json:"modifiedCount"`
+	StagedCount    int      `json:"stagedCount"`
+	UntrackedFiles []string `json:"untrackedFiles,omitempty"`
+	ModifiedFiles  []string `json:"modifiedFiles,omitempty"`
+	StagedFiles    []string `json:"stagedFiles,omitempty"`
 }
 
 // RemoteInfo holds remote name and URL.
@@ -149,16 +152,19 @@ func GetRepoInfo(path string) RepoInfo {
 	if err == nil {
 		status, err := wt.Status()
 		if err == nil {
-			for _, s := range status {
+			for path, s := range status {
 				if s.Staging != git.Unmodified {
-					info.Staged++
+					info.StagedCount++
+					info.StagedFiles = append(info.StagedFiles, path)
 					info.IsDirty = true
 				}
 				if s.Worktree == git.Untracked {
-					info.Untracked++
+					info.UntrackedCount++
+					info.UntrackedFiles = append(info.UntrackedFiles, path)
 					info.IsDirty = true
 				} else if s.Worktree != git.Unmodified {
-					info.Modified++
+					info.ModifiedCount++
+					info.ModifiedFiles = append(info.ModifiedFiles, path)
 					info.IsDirty = true
 				}
 			}
