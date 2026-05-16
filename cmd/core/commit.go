@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/lazycommit/lazycommit/internal/git"
 	"github.com/spf13/cobra"
@@ -17,13 +18,25 @@ type CommitResponse struct {
 
 func NewCommitCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "commit [repo_path]",
-		Short: "Perform a one-off auto-commit of tracked changes (JSON output)",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "commit [repo_path] [message]",
+		Short: "Perform a one-off auto-commit (JSON output)",
+		Long: `Perform an auto-commit for the specified repository.
+Path defaults to '.' if empty or omitted.
+If message is 'random', a timestamped message like '20260516-093000-autoCommit' is used.`,
+		Args: cobra.MaximumNArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
 			repoPath := "."
-			if len(args) == 1 {
+			if len(args) >= 1 && args[0] != "" {
 				repoPath = args[0]
+			}
+
+			message := ""
+			if len(args) == 2 {
+				if args[1] == "random" {
+					message = time.Now().Format("20060102-150405") + "-autoCommit"
+				} else {
+					message = args[1]
+				}
 			}
 
 			absPath, err := filepath.Abs(repoPath)
@@ -42,7 +55,7 @@ func NewCommitCmd() *cobra.Command {
 				return
 			}
 
-			err = engine.StageAndCommit(absPath)
+			err = engine.StageAndCommitWithMsg(absPath, message)
 			if err != nil {
 				PrintErrorJSON(err)
 				return
