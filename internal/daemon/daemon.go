@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"os"
+	"os/exec"
 	"os/signal"
 	"reflect"
 	"syscall"
@@ -111,6 +112,24 @@ func (d *Daemon) pollScheduler(ctx context.Context) {
 					if err != nil {
 						d.logger.Error("Scheduled push failed", zap.Error(err))
 						d.retryQueue.Enqueue(task.Repo)
+					}
+				case scheduler.TaskRun:
+					if len(task.Args) > 0 {
+						cmdStr := task.Args[0]
+						d.logger.Info("Executing scheduled shell command", zap.String("command", cmdStr))
+						cmd := exec.Command("bash", "-c", cmdStr)
+						cmd.Dir = task.Repo
+						output, err := cmd.CombinedOutput()
+						if err != nil {
+							d.logger.Error("Scheduled shell command failed", 
+								zap.String("command", cmdStr), 
+								zap.Error(err), 
+								zap.String("output", string(output)))
+						} else {
+							d.logger.Info("Scheduled shell command successful", 
+								zap.String("command", cmdStr), 
+								zap.String("output", string(output)))
+						}
 					}
 				}
 			}

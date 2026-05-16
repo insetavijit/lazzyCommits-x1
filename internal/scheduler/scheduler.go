@@ -16,6 +16,7 @@ type TaskType string
 const (
 	TaskCommit TaskType = "commit"
 	TaskPush   TaskType = "push"
+	TaskRun    TaskType = "run"
 )
 
 type Task struct {

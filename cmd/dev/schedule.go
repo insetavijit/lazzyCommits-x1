@@ -15,6 +15,7 @@ var (
 	listFlag   bool
 	commitFlag bool
 	pushFlag   bool
+	runFlag    string
 	timeFlag   string
 )
 
@@ -32,11 +33,12 @@ var randomMessages = []string{
 func NewScheduleCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedule [repo_path]",
-		Short: "Schedule a Git action via the daemon",
-		Long: `Schedule a commit or push for a repository after a specific delay.
+		Short: "Schedule a Git action or shell command via the daemon",
+		Long: `Schedule a commit, push, or any shell command for a repository after a specific delay.
 Examples:
   lazycommit schedule . --commit -t 5s
-  lazycommit schedule . --push -t 10m`,
+  lazycommit schedule . --push -t 10m
+  lazycommit schedule . --run "npm run build" -t 15s`,
 		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			client, err := ipc.NewClient()
@@ -83,8 +85,11 @@ Examples:
 				taskArgs = []string{msg}
 			} else if pushFlag {
 				taskType = "push"
+			} else if runFlag != "" {
+				taskType = "run"
+				taskArgs = []string{runFlag}
 			} else {
-				fmt.Println("Error: either --commit or --push must be specified")
+				fmt.Println("Error: either --commit, --push, or --run must be specified")
 				return
 			}
 
@@ -106,6 +111,7 @@ Examples:
 	cmd.Flags().BoolVarP(&listFlag, "list", "l", false, "List all scheduled tasks")
 	cmd.Flags().BoolVarP(&commitFlag, "commit", "c", false, "Schedule a commit")
 	cmd.Flags().BoolVarP(&pushFlag, "push", "p", false, "Schedule a push")
+	cmd.Flags().StringVarP(&runFlag, "run", "r", "", "Schedule a custom shell command")
 	cmd.Flags().StringVarP(&timeFlag, "time", "t", "5s", "Delay before execution (e.g. 5s, 2m, 1h)")
 
 	return cmd
