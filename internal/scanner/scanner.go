@@ -116,9 +116,15 @@ func ScanAll(root string) ([]RepoInfo, error) {
 func GetRepoInfo(path string) RepoInfo {
 	info := RepoInfo{Path: path, Branch: "unknown"}
 	
-	repo, err := git.PlainOpen(path)
+	repo, err := git.PlainOpenWithOptions(path, &git.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
 		return info
+	}
+
+	// Update path to actual git root
+	wt, err := repo.Worktree()
+	if err == nil {
+		info.Path = wt.Filesystem.Root()
 	}
 
 	// Get Branch
@@ -139,7 +145,7 @@ func GetRepoInfo(path string) RepoInfo {
 	}
 
 	// Get status for dirty check and counts
-	wt, err := repo.Worktree()
+	wt, err = repo.Worktree()
 	if err == nil {
 		status, err := wt.Status()
 		if err == nil {
@@ -164,11 +170,17 @@ func GetRepoInfo(path string) RepoInfo {
 
 // GetRepoBrief extracts detailed Git metadata from a repository path.
 func GetRepoBrief(path string) RepoBrief {
+	repo, err := git.PlainOpenWithOptions(path, &git.PlainOpenOptions{DetectDotGit: true})
+	if err == nil {
+		if wt, err := repo.Worktree(); err == nil {
+			path = wt.Filesystem.Root()
+		}
+	}
+
 	base := GetRepoInfo(path)
 	brief := RepoBrief{RepoInfo: base}
 
-	repo, err := git.PlainOpen(path)
-	if err != nil {
+	if repo == nil {
 		return brief
 	}
 
