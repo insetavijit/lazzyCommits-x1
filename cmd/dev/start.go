@@ -16,6 +16,7 @@ import (
 var (
 	installFlag bool
 	debugFlag   bool
+	logFlag     bool
 )
 
 func NewStartCmd() *cobra.Command {
@@ -59,6 +60,23 @@ func NewStartCmd() *cobra.Command {
 				}
 			}
 
+			if logFlag {
+				// Run in foreground
+				daemonArgs := []string{"daemon"}
+				if debugFlag {
+					daemonArgs = append(daemonArgs, "--debug")
+				}
+				executable, _ := os.Executable()
+				daemonCmd := exec.Command(executable, daemonArgs...)
+				daemonCmd.Stdout = os.Stdout
+				daemonCmd.Stderr = os.Stderr
+				fmt.Println("Running lazyCommit in foreground mode...")
+				if err := daemonCmd.Run(); err != nil {
+					fmt.Printf("Daemon exited with error: %v\n", err)
+				}
+				return
+			}
+
 			executable, _ := os.Executable()
 			daemonArgs := []string{"daemon"}
 			if debugFlag {
@@ -89,5 +107,6 @@ func NewStartCmd() *cobra.Command {
 
 	cmd.Flags().BoolVarP(&installFlag, "install", "i", false, "Install autostart script for current user")
 	cmd.Flags().BoolVarP(&debugFlag, "debug", "d", false, "Enable debug logging")
+	cmd.Flags().BoolVarP(&logFlag, "log", "l", false, "Run in foreground and print logs to stdout")
 	return cmd
 }
