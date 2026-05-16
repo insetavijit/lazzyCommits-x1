@@ -61,7 +61,7 @@ Examples:
 					return
 				}
 				if !resp.Success {
-					core.PrintErrorJSON("schedule", fmt.Errorf(resp.Error))
+					core.PrintErrorJSON("schedule", fmt.Errorf("%s", resp.Error))
 					return
 				}
 				core.PrintJSON("schedule", TerminateResponse{
@@ -116,7 +116,7 @@ Examples:
 			}
 
 			if !resp.Success {
-				core.PrintErrorJSON("schedule", fmt.Errorf(resp.Error))
+				core.PrintErrorJSON("schedule", fmt.Errorf("%s", resp.Error))
 				return
 			}
 

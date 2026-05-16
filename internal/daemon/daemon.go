@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -9,9 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lazycommit/lazycommit/cmd/core"
 	"github.com/lazycommit/lazycommit/internal/config"
-	"github.com/lazycommit/lazycommit/internal/git"
-	actlogger "github.com/lazycommit/lazycommit/internal/logger"
 	"github.com/lazycommit/lazycommit/internal/queue"
 	"github.com/lazycommit/lazycommit/internal/scheduler"
 	"github.com/lazycommit/lazycommit/internal/state"
@@ -25,7 +25,6 @@ type Daemon struct {
 	registry       *Registry
 	ctx            context.Context
 	retryQueue     *queue.RetryQueue
-	activityLogger *actlogger.ActivityLogger
 	scheduler      *scheduler.Scheduler
 }
 
@@ -33,12 +32,11 @@ func New(cfg *config.Config, logger *zap.Logger) *Daemon {
 	rq, _ := queue.NewRetryQueue(logger)
 	sched, _ := scheduler.NewScheduler(logger)
 	return &Daemon{
-		cfg:            cfg,
-		logger:         logger,
-		registry:       NewRegistry(),
-		retryQueue:     rq,
-		activityLogger: actlogger.NewActivityLogger(),
-		scheduler:      sched,
+		cfg:        cfg,
+		logger:     logger,
+		registry:   NewRegistry(),
+		retryQueue: rq,
+		scheduler:  sched,
 	}
 }
 
@@ -50,6 +48,12 @@ func (d *Daemon) Start(ctx context.Context) error {
 	for _, repoCfg := range d.cfg.Repos {
 		d.logger.Info("Checking repo config", zap.String("path", repoCfg.Path), zap.Bool("enabled", repoCfg.Enabled))
 		if repoCfg.Enabled {
+			healthy, reason := d.isRepoHealthy(repoCfg.Path)
+			if !healthy {
+				d.logger.Warn("Ignoring repository: health check failed", zap.String("path", repoCfg.Path), zap.String("reason", reason))
+				continue
+			}
+
 			repoCtx, cancel := context.WithCancel(d.ctx)
 			d.registry.Add(repoCfg, cancel)
 			repo, _ := d.registry.Get(repoCfg.Path)
@@ -82,11 +86,49 @@ func (d *Daemon) Start(ctx context.Context) error {
 	return nil
 }
 
+func (d *Daemon) isRepoHealthy(path string) (bool, string) {
+	executable, err := os.Executable()
+	if err != nil {
+		return false, "failed to locate executable"
+	}
+
+	cmd := exec.Command(executable, "validate", "--health", "--path", path)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, string(output)
+	}
+
+	var env core.ResponseEnvelope
+	if err := json.Unmarshal(output, &env); err != nil {
+		return false, "failed to parse validate output"
+	}
+
+	if env.Error != "" {
+		return false, env.Error
+	}
+
+	if env.Data != nil {
+		dataBytes, _ := json.Marshal(env.Data)
+		var resp core.ValidateResponse
+		if json.Unmarshal(dataBytes, &resp) == nil && resp.Health != nil {
+			if !resp.Health.IsHealthy {
+				msg := resp.Health.Message
+				if msg == "" {
+					msg = "unknown health error"
+				}
+				return false, msg
+			}
+		}
+	}
+
+	return true, ""
+}
+
 func (d *Daemon) pollScheduler(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	engine := git.NewEngine(d.logger)
+	executable, _ := os.Executable()
 
 	for {
 		select {
@@ -99,20 +141,41 @@ func (d *Daemon) pollScheduler(ctx context.Context) {
 				
 				switch task.Type {
 				case scheduler.TaskCommit:
-					msg := ""
-					if len(task.Args) > 0 {
+					msg := "auto-commit"
+					if len(task.Args) > 0 && task.Args[0] != "" {
 						msg = task.Args[0]
 					}
-					err := engine.StageAndCommitWithMsg(task.Repo, msg)
+					
+					cmd := exec.Command(executable, "commit", task.Repo, msg)
+					output, err := cmd.CombinedOutput()
 					if err != nil {
-						d.logger.Error("Scheduled commit failed", zap.Error(err))
+						d.logger.Error("Scheduled commit process failed", zap.Error(err), zap.String("output", string(output)))
+					} else {
+						var env core.ResponseEnvelope
+						if json.Unmarshal(output, &env) == nil && env.Error != "" {
+							d.logger.Error("Scheduled commit failed internally", zap.String("error", env.Error))
+						} else {
+							d.logger.Info("Scheduled commit successful", zap.String("repo", task.Repo))
+						}
 					}
+					
 				case scheduler.TaskPush:
-					err := engine.Push(task.Repo)
+					cmd := exec.Command(executable, "push", task.Repo)
+					output, err := cmd.CombinedOutput()
 					if err != nil {
-						d.logger.Error("Scheduled push failed", zap.Error(err))
+						d.logger.Error("Scheduled push process failed", zap.Error(err), zap.String("output", string(output)))
 						d.retryQueue.Enqueue(task.Repo)
+					} else {
+						var env core.ResponseEnvelope
+						if json.Unmarshal(output, &env) == nil && env.Error != "" {
+							d.logger.Error("Scheduled push failed internally", zap.String("error", env.Error))
+							d.retryQueue.Enqueue(task.Repo)
+						} else {
+							d.logger.Info("Scheduled push successful", zap.String("repo", task.Repo))
+							// We successfully pushed. Watcher handles IDLE transition.
+						}
 					}
+					
 				case scheduler.TaskRun:
 					if len(task.Args) > 0 {
 						cmdStr := task.Args[0]
@@ -143,7 +206,7 @@ func (d *Daemon) pollRetryQueue(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	engine := git.NewEngine(d.logger)
+	executable, _ := os.Executable()
 
 	for {
 		select {
@@ -160,9 +223,18 @@ func (d *Daemon) pollRetryQueue(ctx context.Context) {
 			}
 
 			d.logger.Info("Retrying push", zap.String("repo", item.RepoPath))
-			err := engine.Push(item.RepoPath)
+			cmd := exec.Command(executable, "push", item.RepoPath)
+			output, err := cmd.CombinedOutput()
+			
 			if err != nil {
-				d.logger.Warn("Retry push failed", zap.String("repo", item.RepoPath), zap.Error(err))
+				d.logger.Warn("Retry push process failed", zap.String("repo", item.RepoPath), zap.Error(err), zap.String("output", string(output)))
+				d.retryQueue.HandleFailure(item)
+				continue
+			}
+			
+			var env core.ResponseEnvelope
+			if json.Unmarshal(output, &env) == nil && env.Error != "" {
+				d.logger.Warn("Retry push failed internally", zap.String("repo", item.RepoPath), zap.String("error", env.Error))
 				d.retryQueue.HandleFailure(item)
 			} else {
 				d.logger.Info("Retry push successful", zap.String("repo", item.RepoPath))
@@ -207,6 +279,12 @@ func (d *Daemon) Reconcile(newCfg *config.Config) {
 			continue
 		}
 		if _, exists := d.registry.Get(path); !exists {
+			healthy, reason := d.isRepoHealthy(path)
+			if !healthy {
+				d.logger.Warn("Ignoring new repository: health check failed", zap.String("path", path), zap.String("reason", reason))
+				continue
+			}
+
 			d.logger.Info("Starting repo watcher", zap.String("path", path))
 			repoCtx, cancel := context.WithCancel(d.ctx)
 			d.registry.Add(newRepoCfg, cancel)
@@ -222,19 +300,14 @@ func (d *Daemon) watchRepo(ctx context.Context, repo *Repository) {
 	d.logger.Info("Watching repository", zap.String("path", repo.Config.Path))
 	
 	rw := watcher.NewRepoWatcher(repo.Config.Path, d.logger)
-	engine := git.NewEngine(d.logger)
-	guard := git.NewSafetyGuard(d.logger)
 
 	go rw.Watch(ctx)
 
 	sm := state.NewStateMachine(
 		repo.Config,
 		d.cfg.Global,
-		engine,
-		guard,
-		d.activityLogger,
+		d.scheduler,
 		rw.Events(),
-		d.retryQueue,
 		d.logger,
 	)
 

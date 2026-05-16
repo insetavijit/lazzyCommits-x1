@@ -103,7 +103,16 @@ func (s *IPCServer) handleConnection(conn net.Conn) {
 			var scheduledMsg string
 			if repo.StateMachine != nil {
 				stateStr = string(repo.StateMachine.GetState())
-				scheduledAt, scheduledMsg = repo.StateMachine.GetScheduledInfo()
+			}
+			// Look for an upcoming commit task for this repo in the scheduler
+			for _, task := range s.scheduler.All() {
+				if task.Repo == repo.Config.Path && task.Type == scheduler.TaskCommit {
+					scheduledAt = task.RunAt
+					if len(task.Args) > 0 {
+						scheduledMsg = task.Args[0]
+					}
+					break
+				}
 			}
 			resp.Repos = append(resp.Repos, ipc.RepoStatus{
 				Path:         repo.Config.Path,

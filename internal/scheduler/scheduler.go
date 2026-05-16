@@ -66,6 +66,60 @@ func (s *Scheduler) Schedule(task *Task) error {
 	return s.save()
 }
 
+func (s *Scheduler) UpsertRepoTask(repo string, taskType TaskType, runAt time.Time, args []string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Find existing task for this repo and type
+	for id, task := range s.tasks {
+		if task.Repo == repo && task.Type == taskType {
+			task.RunAt = runAt
+			task.Args = args
+			s.logger.Info("Task updated", 
+				zap.String("id", id), 
+				zap.String("type", string(taskType)), 
+				zap.Time("at", runAt))
+			return id, s.save()
+		}
+	}
+
+	// Not found, create new
+	task := &Task{
+		ID:    fmt.Sprintf("%d", time.Now().UnixNano()),
+		Type:  taskType,
+		Repo:  repo,
+		Args:  args,
+		RunAt: runAt,
+	}
+	s.tasks[task.ID] = task
+	
+	s.logger.Info("Task scheduled", 
+		zap.String("id", task.ID), 
+		zap.String("type", string(task.Type)), 
+		zap.Time("at", task.RunAt))
+
+	return task.ID, s.save()
+}
+
+func (s *Scheduler) RemoveRepoTask(repo string, taskType TaskType) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deleted := false
+	for id, task := range s.tasks {
+		if task.Repo == repo && task.Type == taskType {
+			delete(s.tasks, id)
+			s.logger.Info("Task removed", zap.String("id", id), zap.String("type", string(taskType)))
+			deleted = true
+		}
+	}
+
+	if deleted {
+		return s.save()
+	}
+	return nil
+}
+
 func (s *Scheduler) GetPending() []*Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()

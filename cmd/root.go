@@ -37,6 +37,8 @@ func init() {
 	rootCmd.AddCommand(core.NewWatchCmd())
 	rootCmd.AddCommand(core.NewValidateCmd())
 	rootCmd.AddCommand(core.NewLogCmd())
+	rootCmd.AddCommand(core.NewHistoryCmd())
+	rootCmd.AddCommand(core.NewStatCmd())
 
 	// Complex Dev Commands
 	rootCmd.AddCommand(dev.NewStartCmd())
@@ -45,6 +47,10 @@ func init() {
 	rootCmd.AddCommand(dev.NewLogsCmd())
 	rootCmd.AddCommand(dev.NewScheduleCmd())
 	rootCmd.AddCommand(dev.NewDaemonCmd())
+	rootCmd.AddCommand(dev.NewResetCmd())
+	rootCmd.AddCommand(dev.NewDestroyCmd())
+	rootCmd.AddCommand(dev.NewHistoryCmd())
+	rootCmd.AddCommand(dev.NewStatCmd())
 }
 
 func initConfig() {

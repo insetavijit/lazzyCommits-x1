@@ -27,6 +27,7 @@ const (
 
 type ActivityEntry struct {
 	ID        string    `json:"id"`
+	Repo      string    `json:"repo,omitempty"`
 	Timestamp time.Time `json:"ts"`
 	Action    Action    `json:"action"`
 	Outcome   Outcome   `json:"outcome"`
@@ -48,6 +49,7 @@ func NewActivityLogger() *ActivityLogger {
 func (l *ActivityLogger) Log(repoPath string, action Action, outcome Outcome, duration time.Duration, err error) {
 	entry := ActivityEntry{
 		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+		Repo:      repoPath,
 		Timestamp: time.Now().UTC(),
 		Action:    action,
 		Outcome:   outcome,
@@ -127,6 +129,50 @@ func (l *ActivityLogger) ListRepos() []string {
 		}
 	}
 	return repos
+}
+
+type GlobalActivityEntry struct {
+	Repo string `json:"repo"`
+	ActivityEntry
+}
+
+func (l *ActivityLogger) GetAllLogs() ([]GlobalActivityEntry, error) {
+	repos := l.ListRepos()
+	var allEntries []GlobalActivityEntry
+
+	for _, repo := range repos {
+		// This is slightly inefficient as we don't have the original path, 
+		// but for history we can use the sanitized name or we'd need to store the path in the log.
+		// Since we don't store the path in the log, we'll just use the sanitized name for now 
+		// or wait for the user to specify.
+		// Actually, let's just read the logs.
+		sanitized := repo
+		logFile := filepath.Join(l.logDir, sanitized+".log")
+		
+		file, err := os.Open(logFile)
+		if err != nil {
+			continue
+		}
+		
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			var entry ActivityEntry
+			if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+				continue
+			}
+			repoName := entry.Repo
+			if repoName == "" {
+				repoName = repo
+			}
+			allEntries = append(allEntries, GlobalActivityEntry{
+				Repo:          repoName,
+				ActivityEntry: entry,
+			})
+		}
+		file.Close()
+	}
+
+	return allEntries, nil
 }
 
 func (l *ActivityLogger) SanitizeRepoPath(path string) string {
