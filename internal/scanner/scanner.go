@@ -48,8 +48,8 @@ type RepoBrief struct {
 }
 
 // Scan searches for Git repositories downwards from the given root directory.
-func Scan(root string) ([]RepoInfo, error) {
-	var repos []RepoInfo
+func Scan(root string) ([]RepoBrief, error) {
+	var repos []RepoBrief
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return filepath.SkipDir
@@ -62,8 +62,8 @@ func Scan(root string) ([]RepoInfo, error) {
 		name := info.Name()
 		if name == ".git" {
 			repoPath := filepath.Dir(path)
-			repoInfo := GetRepoInfo(repoPath)
-			repos = append(repos, repoInfo)
+			repoBrief := GetRepoBrief(repoPath)
+			repos = append(repos, repoBrief)
 			return filepath.SkipDir
 		}
 		if name == "node_modules" || name == "vendor" || name == ".idea" || name == ".vscode" {
@@ -76,8 +76,8 @@ func Scan(root string) ([]RepoInfo, error) {
 }
 
 // ScanAll searches for Git repositories including parent directories of the root.
-func ScanAll(root string) ([]RepoInfo, error) {
-	var repos []RepoInfo
+func ScanAll(root string) ([]RepoBrief, error) {
+	var repos []RepoBrief
 	
 	uniquePaths := make(map[string]bool)
 
@@ -87,7 +87,7 @@ func ScanAll(root string) ([]RepoInfo, error) {
 		gitDir := filepath.Join(current, ".git")
 		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
 			if !uniquePaths[current] {
-				repos = append(repos, GetRepoInfo(current))
+				repos = append(repos, GetRepoBrief(current))
 				uniquePaths[current] = true
 			}
 		}
@@ -105,10 +105,10 @@ func ScanAll(root string) ([]RepoInfo, error) {
 		return repos, err
 	}
 
-	for _, info := range downstream {
-		if !uniquePaths[info.Path] {
-			repos = append(repos, info)
-			uniquePaths[info.Path] = true
+	for _, brief := range downstream {
+		if !uniquePaths[brief.Path] {
+			repos = append(repos, brief)
+			uniquePaths[brief.Path] = true
 		}
 	}
 
